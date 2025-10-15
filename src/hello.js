@@ -1300,32 +1300,109 @@ hello.utils.extend(hello.utils, {
 		var p;
 		var location = window.location;
 
+		// Helper to robustly decode a state string that may be JSON, URL-encoded,
+		// HTML-entity encoded, or base64 encoded (provider specific quirks)
+		function decodeStateString(str) {
+			if (!str || typeof str !== 'string') {
+				return null;
+			}
+
+			function tryParse(jsonString) {
+				try { return JSON.parse(jsonString); } catch (e) { return null; }
+			}
+
+			function decodeURIComponentSafe(s) {
+				try { return decodeURIComponent(s); } catch (e) { return s; }
+			}
+
+			function unescapeSafe(s) {
+				try { return unescape(s); } catch (e) { return s; }
+			}
+
+			function htmlEntityDecode(s) {
+				// Handle common encodings seen in wild redirects
+				return s
+					.replace(/&#34;/g, '"')
+					.replace(/&quot;/g, '"')
+					.replace(/&#39;/g, "'")
+					.replace(/&apos;/g, "'");
+			}
+
+			function atobSafe(s) {
+				try { return window.atob(s); } catch (e) { return null; }
+			}
+
+			// Try raw JSON first
+			var obj = tryParse(str);
+			if (obj) { return obj; }
+
+			// Try URL-decoded once
+			var urlOnce = decodeURIComponentSafe(str);
+			obj = tryParse(urlOnce);
+			if (obj) { return obj; }
+
+			// Try unescape (covers some ISO-8859-1 escapes as seen with Amazon)
+			var unesc = unescapeSafe(str);
+			obj = tryParse(unesc);
+			if (obj) { return obj; }
+
+			// Try HTML-entity replacements
+			var html = htmlEntityDecode(str);
+			obj = tryParse(html);
+			if (obj) { return obj; }
+
+			// Try base64 (some providers require/return base64 state)
+			// Attempt straight, url-decoded, and HTML-entity cleaned variants
+			var candidates = [str, urlOnce, html];
+			for (var i = 0; i < candidates.length; i++) {
+				var c = candidates[i];
+				// Heuristic: base64 charset and padding
+				if (/^[A-Za-z0-9+/=_-]+$/.test(c)) {
+					// Replace URL-safe base64 chars if present
+					var normalized = c.replace(/-/g, '+').replace(/_/g, '/');
+					var padded = normalized + Array((4 - (normalized.length % 4)) % 4 + 1).join('=');
+					var b64 = atobSafe(padded);
+					if (b64) {
+						obj = tryParse(b64);
+						if (obj) { return obj; }
+					}
+				}
+			}
+
+			// Last attempt: decodeURIComponent + unescape combo (legacy kludge)
+			var combo;
+			try { combo = decodeURIComponent(unescape(str)); } catch (e) { combo = null; }
+			if (combo) {
+				obj = tryParse(combo);
+				if (obj) { return obj; }
+			}
+
+			return null;
+		}
+
 		// Is this an auth relay message which needs to call the proxy?
 		p = _this.param(location.search);
 
 		// OAuth2 or OAuth1 server response?
 		if (p && p.state && (p.code || p.oauth_token)) {
 
-			try {
-				var state = JSON.parse(p.state);
-
-				// Add this path as the redirect_uri
-				p.redirect_uri = state.redirect_uri || location.href.replace(/[\?\#].*$/, '');
-
-				// Redirect to the host
-				var path = _this.qs(state.oauth_proxy, p);
-
-
-				if (isValidUrl(path)) {
-					location.assign(path);
-				}
-
+			var state = decodeStateString(p.state);
+			if (!state) {
+				console.error('Could not decode state parameter');
 				return;
 			}
-			catch (e) {
-				console.error('Could not decode state parameter', e);
-				return;
+
+			// Add this path as the redirect_uri
+			p.redirect_uri = state.redirect_uri || location.href.replace(/[\?\#].*$/, '');
+
+			// Redirect to the host
+			var path = _this.qs(state.oauth_proxy, p);
+
+			if (isValidUrl(path)) {
+				location.assign(path);
 			}
+
+			return;
 		}
 
 		// Save session, from redirected authentication
@@ -1341,19 +1418,12 @@ hello.utils.extend(hello.utils, {
 
 			// Remove any addition information
 			// E.g. p.state = 'facebook.page';
-			try {
-				var a = JSON.parse(p.state);
-				_this.extend(p, a);
+			var parsedState = decodeStateString(p.state);
+			if (parsedState) {
+				_this.extend(p, parsedState);
 			}
-			catch (e) {
-				var stateDecoded = decodeURIComponent(p.state);
-				try {
-					var b = JSON.parse(stateDecoded);
-					_this.extend(p, b);
-				}
-				catch (e) {
-					console.error('Could not decode state parameter');
-				}
+			else {
+				console.error('Could not decode state parameter');
 			}
 
 			// Access_token?
