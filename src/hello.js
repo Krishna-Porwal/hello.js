@@ -1467,9 +1467,15 @@ hello.utils.extend(hello.utils, {
 				closeWindow();
 			}
 
+
 			// If this page is still open
+			// Avoid double reloads in SPA flows by only navigating if target differs from current URL (ignoring hash)
 			if (p.page_uri && isValidUrl(p.page_uri)) {
-				location.assign(p.page_uri);
+				var targetHref = utils.url(p.page_uri).href;
+				var currentHref = location.href;
+				if (targetHref.replace(/#.*$/, '') !== currentHref.replace(/#.*$/, '')) {
+					location.assign(p.page_uri);
+				}
 			}
 		}
 
