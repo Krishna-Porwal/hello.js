@@ -362,9 +362,12 @@ hello.utils.extend(hello, {
 
 		// Add OAuth to state
 		// Where the service is going to take advantage of the oauth_proxy
-		if (!/\btoken\b/.test(responseType) ||
+		// If the provider.login has overridden p.qs.state with a non-object (e.g., custom string),
+		// do not attempt to append oauth metadata to it.
+		var isRawState = (typeof p.qs.state !== 'object' || p.qs.state === null);
+		if (!isRawState && (!/\btoken\b/.test(responseType) ||
 		parseInt(provider.oauth.version, 10) < 2 ||
-		(opts.display === 'none' && provider.oauth.grant && session && session.refresh_token)) {
+		(opts.display === 'none' && provider.oauth.grant && session && session.refresh_token))) {
 
 			// Add the oauth endpoints
 			p.qs.state.oauth = provider.oauth;
@@ -375,11 +378,22 @@ hello.utils.extend(hello, {
 		}
 
 		// Convert state to a string
-		if (provider.oauth.base64_state) {
-			p.qs.state = window.btoa(JSON.stringify(p.qs.state));
+		if (isRawState) {
+			// Respect raw state value set by provider.login; encode as URI component
+			if (p.qs.state == null) {
+				p.qs.state = '';
+			}
+			else {
+				p.qs.state = encodeURIComponent(String(p.qs.state));
+			}
 		}
 		else {
-			p.qs.state = encodeURIComponent(JSON.stringify(p.qs.state));
+			if (provider.oauth.base64_state) {
+				p.qs.state = window.btoa(JSON.stringify(p.qs.state));
+			}
+			else {
+				p.qs.state = encodeURIComponent(JSON.stringify(p.qs.state));
+			}
 		}
 
 		// URL
